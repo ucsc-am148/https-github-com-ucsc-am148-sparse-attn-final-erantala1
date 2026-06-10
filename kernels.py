@@ -141,7 +141,7 @@ def sparse_flash_forward_kernel(Q_ptr, K_ptr, V_ptr, O_ptr, L_ptr, q_row_offsets
         l_new = alpha * l + tl.sum(p, axis=1)
 
         # rescale old accumulator and add this block's contribution
-        acc = acc * alpha[:, None] + tl.dot(p.to(tl.float32), v.to(tl.float32), out_dtype=tl.float32, allow_tf32=False)
+        acc = acc * alpha[:, None] + tl.dot(p.to(tl.float16), v, out_dtype=tl.float32,)
         m = m_new
         l = l_new
 
@@ -268,17 +268,16 @@ def _sparse_attn_bwd_dkdv_kernel(Q_ptr, K_ptr, V_ptr, dO_ptr, L_ptr, D_ptr, dK_p
         p = tl.math.exp2(scores - l_i[:, None])
 
         # dV_j += P_ij^T dO_i
-        dv_acc += tl.dot(tl.trans(p.to(tl.float32)), do.to(tl.float32), out_dtype=tl.float32, allow_tf32=False,)
+        dv_acc += tl.dot(tl.trans(p.to(tl.float16)), do, out_dtype=tl.float32)
 
         # dP_ij = dO_i V_j^T
-        dp = tl.dot(do.to(tl.float32), tl.trans(v.to(tl.float32)), out_dtype=tl.float32, allow_tf32=False,)
-
+        dp = tl.dot(do, tl.trans(v), out_dtype=tl.float32)
         # dS_ij = P_ij * (dP_ij - D_i)
         ds = p * (dp - d_i[:, None])
         ds = tl.where(q_mask[:, None] & k_mask[None, :], ds, 0.0)
 
         # dK_j += dS_ij^T Q_i * sm_scale
-        dk_acc += tl.dot(tl.trans(ds.to(tl.float32)), q.to(tl.float32), out_dtype=tl.float32, allow_tf32=False,) * sm_scale
+        dk_acc += tl.dot(tl.trans(ds.to(tl.float16)), q, out_dtype=tl.float32) * sm_scale
 
     tl.store(dK_ptr + offset, dk_acc, mask=k_mask[:, None] & d_mask[None, :],)
     tl.store(dV_ptr + offset, dv_acc, mask=k_mask[:, None] & d_mask[None, :],)
@@ -333,14 +332,13 @@ def _sparse_attn_bwd_dq_kernel(Q_ptr, K_ptr, V_ptr, dO_ptr, L_ptr, D_ptr, dQ_ptr
         p = tl.math.exp2(scores - l_i[:, None])
 
         # dP_ij = dO_i V_j^T
-        dp = tl.dot(do.to(tl.float32), tl.trans(v.to(tl.float32)), out_dtype=tl.float32, allow_tf32=False,)
-
+        dp = tl.dot(do, tl.trans(v), out_dtype=tl.float32)
         # dS_ij = P_ij * (dP_ij - D_i)
         ds = p * (dp - d_i[:, None])
         ds = tl.where(q_mask[:, None] & k_mask[None, :], ds, 0.0)
 
         # dQ_i += dS_ij K_j * sm_scale
-        dq_acc += tl.dot(ds.to(tl.float32), k.to(tl.float32), out_dtype=tl.float32, allow_tf32=False,) * sm_scale
+        dq_acc += tl.dot(ds.to(tl.float16), k, out_dtype=tl.float32) * sm_scale
 
     offset_dq = base + offset_q[:, None] * HEAD_DIM + offset_d[None, :]
     tl.store(dQ_ptr + offset_dq, dq_acc, mask=q_mask[:, None] & d_mask[None, :],
